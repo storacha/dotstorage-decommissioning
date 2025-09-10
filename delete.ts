@@ -11,7 +11,7 @@ interface CsvRow {
 
 const dynamodb = new DynamoDBClient({ region: 'us-west-2' })
 
-async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.Version>): Promise<boolean> {
+async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.Version>): Promise<string | null> {
   const multihashBase58 = base58btc.encode(carLink.multihash.bytes)
   const carLinkStr = carLink.toString()
 
@@ -26,7 +26,7 @@ async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.
     Limit: 1
   }))
   if (storeQuery.Items && storeQuery.Items.length > 0) {
-    return true
+    return 'store'
   }
 
   // Check prod-w3infra-allocation table
@@ -40,7 +40,7 @@ async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.
     Limit: 1
   }))
   if (allocationQuery.Items && allocationQuery.Items.length > 0) {
-    return true
+    return 'allocation'
   }
 
   // Check prod-w3infra-blob-registry table
@@ -54,21 +54,31 @@ async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.
     Limit: 1
   }))
   if (blobQuery.Items && blobQuery.Items.length > 0) {
-    return true
+    return 'blob-registry'
   }
 
-  return false
+  return null
+}
+
+function parseCarId(carId: string){
+  if (carId.startsWith('ciq')){
+    // parse the "madhat" hash we used for some of this stuff
+    const digestBytes = base32.baseDecode(carId)
+    const digest = Digest.decode(digestBytes)
+    return Link.create(0x0202, digest)
+  } else {
+    // we'll just assume this is already a CID
+    return Link.parse(carId)
+  }
 }
 
 process.stdin
   .pipe(csv())
   .on('data', async (row: CsvRow) => {
     // Process each row
-    const digestBytes = base32.baseDecode(row.car_id)
-    const digest = Digest.decode(digestBytes)
-    const carLink = Link.create(0x0202, digest)
+    const carLink = parseCarId(row.car_id)
     const migrated = await hasBeenMigrated(carLink)
-    console.log(`${carLink.toString()} ${migrated ? 'has' : 'has not'} been migrated`)
+    console.log(`${carLink.toString()} ${migrated ? `has been migrated to the ${migrated} table` : 'has not been migrated'}`)
   })
   .on('end', () => {
     console.log('CSV processing complete');
