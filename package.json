@@ -14,5 +14,9 @@
     "@aws-sdk/client-dynamodb": "^3.886.0",
     "csv-parser": "^3.2.0",
     "multiformats": "^13.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "typescript": "^5.9.2"
   }
 }

@@ -5,9 +5,13 @@ import * as Digest from 'multiformats/hashes/digest'
 import csv from 'csv-parser'
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb'
 
+interface CsvRow {
+  car_id: string
+}
+
 const dynamodb = new DynamoDBClient({ region: 'us-west-2' })
 
-async function hasBeenMigrated(carLink) {
+async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.Version>): Promise<boolean> {
   const multihashBase58 = base58btc.encode(carLink.multihash.bytes)
   const carLinkStr = carLink.toString()
 
@@ -52,11 +56,13 @@ async function hasBeenMigrated(carLink) {
   if (blobQuery.Items && blobQuery.Items.length > 0) {
     return true
   }
+
+  return false
 }
 
 process.stdin
   .pipe(csv())
-  .on('data', async (row) => {
+  .on('data', async (row: CsvRow) => {
     // Process each row
     const digestBytes = base32.baseDecode(row.car_id)
     const digest = Digest.decode(digestBytes)
