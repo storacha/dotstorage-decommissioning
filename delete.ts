@@ -4,12 +4,25 @@ import { base58btc } from 'multiformats/bases/base58'
 import * as Digest from 'multiformats/hashes/digest'
 import csv from 'csv-parser'
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb'
+import { S3Client, CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
+import fs from 'fs'
 
 interface CsvRow {
   car_id: string
 }
 
 const dynamodb = new DynamoDBClient({ region: 'us-west-2' })
+const s3 = new S3Client({ 
+  region: 'auto',
+  endpoint: 'https://ACCOUNT_ID.r2.cloudflarestorage.com' // Replace ACCOUNT_ID with actual Cloudflare account ID
+})
+
+// Parse command line arguments
+const args = process.argv.slice(2)
+const deleteMode = args.includes('--delete')
+
+// Initialize not found CSV writer
+const notFoundStream = fs.createWriteStream('data/notfound.csv', { flags: 'a' })
 
 async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.Version>): Promise<string | null> {
   const multihashBase58 = base58btc.encode(carLink.multihash.bytes)
@@ -72,14 +85,69 @@ function parseCarId(carId: string){
   }
 }
 
+async function deleteFromR2(carId: string): Promise<boolean> {
+  const key = `${carId}/${carId}`
+  
+  try {
+    // First check if object exists
+    await s3.send(new HeadObjectCommand({
+      Bucket: 'carpark-prod-0',
+      Key: key
+    }))
+    
+    // Copy to graveyard bucket
+    await s3.send(new CopyObjectCommand({
+      Bucket: 'dotstorage-graveyard',
+      Key: key,
+      CopySource: `carpark-prod-0/${key}`
+    }))
+    
+    // Delete from original bucket
+    await s3.send(new DeleteObjectCommand({
+      Bucket: 'carpark-prod-0',
+      Key: key
+    }))
+    
+    return true
+  } catch (error: any) {
+    if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+      // Log to notfound.csv
+      notFoundStream.write(`${carId}\n`)
+      return false
+    }
+    throw error
+  }
+}
+
 process.stdin
   .pipe(csv())
   .on('data', async (row: CsvRow) => {
     // Process each row
     const carLink = parseCarId(row.car_id)
     const migrated = await hasBeenMigrated(carLink)
-    console.log(`${carLink.toString()} ${migrated ? `has been migrated to the ${migrated} table` : 'has not been migrated'}`)
+    
+    if (migrated) {
+      console.log(`${carLink.toString()} has been migrated to the ${migrated} table`)
+    } else {
+      console.log(`${carLink.toString()} has not been migrated`)
+      
+      if (deleteMode) {
+        try {
+          const deleted = await deleteFromR2(row.car_id)
+          if (deleted) {
+            console.log(`  ✓ Deleted ${row.car_id} from carpark-prod-0 and backed up to dotstorage-graveyard`)
+          } else {
+            console.log(`  ✗ ${row.car_id} not found in carpark-prod-0 (logged to notfound.csv)`)
+          }
+        } catch (error) {
+          console.error(`  ✗ Error deleting ${row.car_id}:`, error)
+        }
+      } else {
+        console.log("--delete not specified, skipping deletion")
+      }
+    }
   })
   .on('end', () => {
-    console.log('CSV processing complete');
+    console.log('CSV processing complete')
+    notFoundStream.end()
   });
