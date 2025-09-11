@@ -36,8 +36,8 @@ const s3 = new S3Client({
 const args = process.argv.slice(2)
 const deleteMode = args.includes('--delete')
 
-// Initialize not found CSV writer
-const notFoundStream = fs.createWriteStream('data/notfound.csv', { flags: 'a' })
+// Not found CSV file path
+const notFoundPath = 'data/notfound.csv'
 
 async function hasBeenMigrated (carLink: Link.Link<unknown, number, number, Link.Version>): Promise<string | null> {
   const multihashBase58 = base58btc.encode(carLink.multihash.bytes)
@@ -112,7 +112,8 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
   } catch (error: any) {
     if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
       // Log to notfound.csv
-      notFoundStream.write(`${carId}\n`)
+      fs.appendFileSync(notFoundPath, `${carId}\n`)
+      console.log(`${carId} not found in ${CAR_BUCKET} (logged to notfound.csv)`)
       return false
     } else {
       console.error(`error looking for ${carId} in ${CAR_BUCKET}: `, error)
@@ -134,6 +135,7 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
     }))
   } catch (error: any) {
     console.error(`error copying and deleting ${carId} from ${CAR_BUCKET}:`, error)
+    return false
   }
 
   return true
@@ -159,7 +161,7 @@ process.stdin
           if (deleted) {
             console.log(`  ✓ Deleted ${row.car_id} as ${cid} from ${CAR_BUCKET} and backed up to ${GRAVEYARD_BUCKET}`)
           } else {
-            console.log(`  ✗ ${row.car_id} as ${cid} not found in ${CAR_BUCKET} (logged to notfound.csv)`)
+            console.log(`  ✗ ${row.car_id} as ${cid} not deleted from ${CAR_BUCKET} (logged to notfound.csv)`)
           }
         } catch (error) {
           console.error(`  ✗ Error deleting ${row.car_id} as ${cid}:`, error)
@@ -171,5 +173,4 @@ process.stdin
   })
   .on('end', () => {
     console.log('CSV processing complete')
-    notFoundStream.end()
   });
