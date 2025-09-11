@@ -6,15 +6,27 @@ import csv from 'csv-parser'
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb'
 import { S3Client, CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 import fs from 'fs'
+import 'dotenv/config'
 
 interface CsvRow {
   car_id: string
 }
 
-const dynamodb = new DynamoDBClient({ region: 'us-west-2' })
+const dynamodb = new DynamoDBClient({ 
+  region: 'us-west-2',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!
+  }
+})
+
 const s3 = new S3Client({ 
   region: 'auto',
-  endpoint: 'https://ACCOUNT_ID.r2.cloudflarestorage.com' // Replace ACCOUNT_ID with actual Cloudflare account ID
+  endpoint: `https://${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY!
+  }
 })
 
 // Parse command line arguments
