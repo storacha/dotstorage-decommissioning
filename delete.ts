@@ -12,7 +12,7 @@ interface CsvRow {
   car_id: string
 }
 
-const dynamodb = new DynamoDBClient({ 
+const dynamodb = new DynamoDBClient({
   region: 'us-west-2',
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
@@ -20,7 +20,7 @@ const dynamodb = new DynamoDBClient({
   }
 })
 
-const s3 = new S3Client({ 
+const s3 = new S3Client({
   region: 'auto',
   endpoint: `https://${process.env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: {
@@ -36,7 +36,7 @@ const deleteMode = args.includes('--delete')
 // Initialize not found CSV writer
 const notFoundStream = fs.createWriteStream('data/notfound.csv', { flags: 'a' })
 
-async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.Version>): Promise<string | null> {
+async function hasBeenMigrated (carLink: Link.Link<unknown, number, number, Link.Version>): Promise<string | null> {
   const multihashBase58 = base58btc.encode(carLink.multihash.bytes)
   const carLinkStr = carLink.toString()
 
@@ -85,8 +85,8 @@ async function hasBeenMigrated(carLink: Link.Link<unknown, number, number, Link.
   return null
 }
 
-function parseCarId(carId: string){
-  if (carId.startsWith('ciq')){
+function parseCarId (carId: string) {
+  if (carId.startsWith('ciq')) {
     // parse the "madhat" hash we used for some of this stuff
     const digestBytes = base32.baseDecode(carId)
     const digest = Digest.decode(digestBytes)
@@ -97,38 +97,44 @@ function parseCarId(carId: string){
   }
 }
 
-async function deleteFromR2(carId: string): Promise<boolean> {
-  const key = `${carId}/${carId}`
-  
+async function deleteFromR2 (carId: string): Promise<boolean> {
+  const key = `${carId}/${carId}.car`
+
   try {
     // First check if object exists
     await s3.send(new HeadObjectCommand({
       Bucket: 'carpark-prod-0',
       Key: key
     }))
-    
-    // Copy to graveyard bucket
-    await s3.send(new CopyObjectCommand({
-      Bucket: 'dotstorage-graveyard',
-      Key: key,
-      CopySource: `carpark-prod-0/${key}`
-    }))
-    
-    // Delete from original bucket
-    await s3.send(new DeleteObjectCommand({
-      Bucket: 'carpark-prod-0',
-      Key: key
-    }))
-    
-    return true
   } catch (error: any) {
     if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
       // Log to notfound.csv
       notFoundStream.write(`${carId}\n`)
       return false
+    } else {
+      console.error(`error looking for ${carId} in carpark-prod-0: `, error)
     }
-    throw error
   }
+
+  try {
+    // Copy to graveyard bucket
+    await s3.send(new CopyObjectCommand({
+      Bucket: 'carpark-prod-0-graveyard',
+      Key: key,
+      CopySource: `carpark-prod-0/${key}`
+    }))
+
+    // Delete from original bucket
+    await s3.send(new DeleteObjectCommand({
+      Bucket: 'carpark-prod-0',
+      Key: key
+    }))
+  } catch (error: any) {
+    console.error(`error copying and deleting ${carId} from carpark-prod-0:`, error)
+  }
+
+  return true
+
 }
 
 process.stdin
@@ -136,23 +142,24 @@ process.stdin
   .on('data', async (row: CsvRow) => {
     // Process each row
     const carLink = parseCarId(row.car_id)
+    const cid = carLink.toString()
     const migrated = await hasBeenMigrated(carLink)
-    
+
     if (migrated) {
-      console.log(`${carLink.toString()} has been migrated to the ${migrated} table`)
+      console.log(`${cid} has been migrated to the ${migrated} table`)
     } else {
-      console.log(`${carLink.toString()} has not been migrated`)
-      
+      console.log(`${cid} has not been migrated`)
+
       if (deleteMode) {
         try {
-          const deleted = await deleteFromR2(row.car_id)
+          const deleted = await deleteFromR2(cid)
           if (deleted) {
-            console.log(`  ✓ Deleted ${row.car_id} from carpark-prod-0 and backed up to dotstorage-graveyard`)
+            console.log(`  ✓ Deleted ${row.car_id} as ${cid} from carpark-prod-0 and backed up to carpark-prod-0-graveyard`)
           } else {
-            console.log(`  ✗ ${row.car_id} not found in carpark-prod-0 (logged to notfound.csv)`)
+            console.log(`  ✗ ${row.car_id} as ${cid} not found in carpark-prod-0 (logged to notfound.csv)`)
           }
         } catch (error) {
-          console.error(`  ✗ Error deleting ${row.car_id}:`, error)
+          console.error(`  ✗ Error deleting ${row.car_id} as ${cid}:`, error)
         }
       } else {
         console.log("--delete not specified, skipping deletion")
