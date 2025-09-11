@@ -12,6 +12,9 @@ interface CsvRow {
   car_id: string
 }
 
+const CAR_BUCKET = 'carpark-prod-0'
+const GRAVEYARD_BUCKET = 'carpark-prod-0-graveyard'
+
 const dynamodb = new DynamoDBClient({
   region: 'us-west-2',
   credentials: {
@@ -103,7 +106,7 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
   try {
     // First check if object exists
     await s3.send(new HeadObjectCommand({
-      Bucket: 'carpark-prod-0',
+      Bucket: CAR_BUCKET,
       Key: key
     }))
   } catch (error: any) {
@@ -112,25 +115,25 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
       notFoundStream.write(`${carId}\n`)
       return false
     } else {
-      console.error(`error looking for ${carId} in carpark-prod-0: `, error)
+      console.error(`error looking for ${carId} in ${CAR_BUCKET}: `, error)
     }
   }
 
   try {
     // Copy to graveyard bucket
     await s3.send(new CopyObjectCommand({
-      Bucket: 'carpark-prod-0-graveyard',
+      Bucket: GRAVEYARD_BUCKET,
       Key: key,
-      CopySource: `carpark-prod-0/${key}`
+      CopySource: `${CAR_BUCKET}/${key}`
     }))
 
     // Delete from original bucket
     await s3.send(new DeleteObjectCommand({
-      Bucket: 'carpark-prod-0',
+      Bucket: CAR_BUCKET,
       Key: key
     }))
   } catch (error: any) {
-    console.error(`error copying and deleting ${carId} from carpark-prod-0:`, error)
+    console.error(`error copying and deleting ${carId} from ${CAR_BUCKET}:`, error)
   }
 
   return true
@@ -154,9 +157,9 @@ process.stdin
         try {
           const deleted = await deleteFromR2(cid)
           if (deleted) {
-            console.log(`  ✓ Deleted ${row.car_id} as ${cid} from carpark-prod-0 and backed up to carpark-prod-0-graveyard`)
+            console.log(`  ✓ Deleted ${row.car_id} as ${cid} from ${CAR_BUCKET} and backed up to ${GRAVEYARD_BUCKET}`)
           } else {
-            console.log(`  ✗ ${row.car_id} as ${cid} not found in carpark-prod-0 (logged to notfound.csv)`)
+            console.log(`  ✗ ${row.car_id} as ${cid} not found in ${CAR_BUCKET} (logged to notfound.csv)`)
           }
         } catch (error) {
           console.error(`  ✗ Error deleting ${row.car_id} as ${cid}:`, error)
