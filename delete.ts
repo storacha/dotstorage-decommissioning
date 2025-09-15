@@ -34,6 +34,8 @@ const deleteMode = args.includes('--delete')
 
 // Not found CSV file path
 const notFoundPath = 'data/notfound.csv'
+// "Deleted" CSV file path
+const deletedPath = 'data/deleted.csv'
 
 async function hasBeenMigrated (carLink: Link.Link<unknown, number, number, Link.Version>): Promise<string | null> {
   const multihashBase58 = base58btc.encode(carLink.multihash.bytes)
@@ -133,6 +135,7 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
     console.error(`error copying and deleting ${carId} from ${CAR_BUCKET}:`, error)
     return false
   }
+  fs.appendFileSync(deletedPath, `${carId}\n`)
 
   return true
 
