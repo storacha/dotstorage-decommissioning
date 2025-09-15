@@ -118,22 +118,26 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
     }
   }
 
-  try {
-    // Copy to graveyard bucket
-    await s3.send(new CopyObjectCommand({
-      Bucket: GRAVEYARD_BUCKET,
-      Key: key,
-      CopySource: `${CAR_BUCKET}/${key}`
-    }))
+  if (deleteMode) {
+    try {
+      // Copy to graveyard bucket
+      await s3.send(new CopyObjectCommand({
+        Bucket: GRAVEYARD_BUCKET,
+        Key: key,
+        CopySource: `${CAR_BUCKET}/${key}`
+      }))
 
-    // Delete from original bucket
-    await s3.send(new DeleteObjectCommand({
-      Bucket: CAR_BUCKET,
-      Key: key
-    }))
-  } catch (error: any) {
-    console.error(`error copying and deleting ${carId} from ${CAR_BUCKET}:`, error)
-    return false
+      // Delete from original bucket
+      await s3.send(new DeleteObjectCommand({
+        Bucket: CAR_BUCKET,
+        Key: key
+      }))
+    } catch (error: any) {
+      console.error(`error copying and deleting ${carId} from ${CAR_BUCKET}:`, error)
+      return false
+    }
+  } else {
+    console.log("--delete not specified, skipping deletion")
   }
   fs.appendFileSync(deletedPath, `${carId}\n`)
 
@@ -149,7 +153,7 @@ const rl = readline.createInterface({
 rl.on('line', async (carId: string) => {
   carId = carId.trim()
   if (!carId) return // Skip empty lines
-  
+
   const carLink = parseCarId(carId)
   const cid = carLink.toString()
   const migrated = await hasBeenMigrated(carLink)
@@ -158,20 +162,15 @@ rl.on('line', async (carId: string) => {
     console.log(`${cid} has been migrated to the ${migrated} table`)
   } else {
     console.log(`${cid} has not been migrated`)
-
-    if (deleteMode) {
-      try {
-        const deleted = await deleteFromR2(cid)
-        if (deleted) {
-          console.log(`  ✓ Deleted ${carId} as ${cid} from ${CAR_BUCKET} and backed up to ${GRAVEYARD_BUCKET}`)
-        } else {
-          console.log(`  ✗ ${carId} as ${cid} not deleted from ${CAR_BUCKET} (logged to notfound.csv)`)
-        }
-      } catch (error) {
-        console.error(`  ✗ Error deleting ${carId} as ${cid}:`, error)
+    try {
+      const deleted = await deleteFromR2(cid)
+      if (deleted) {
+        console.log(`  ✓ Deleted ${carId} as ${cid} from ${CAR_BUCKET} and backed up to ${GRAVEYARD_BUCKET}`)
+      } else {
+        console.log(`  ✗ ${carId} as ${cid} not deleted from ${CAR_BUCKET} (logged to notfound.csv)`)
       }
-    } else {
-      console.log("--delete not specified, skipping deletion")
+    } catch (error) {
+      console.error(`  ✗ Error deleting ${carId} as ${cid}:`, error)
     }
   }
 })
