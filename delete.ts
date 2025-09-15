@@ -36,6 +36,8 @@ const deleteMode = args.includes('--delete')
 const notFoundPath = 'data/notfound.csv'
 // "Deleted" CSV file path
 const deletedPath = 'data/deleted.csv'
+// "Migrated" CSV file path
+const migratedPath = 'data/migrated.csv'
 
 async function hasBeenMigrated (carLink: Link.Link<unknown, number, number, Link.Version>): Promise<string | null> {
   const multihashBase58 = base58btc.encode(carLink.multihash.bytes)
@@ -98,8 +100,8 @@ function parseCarId (carId: string) {
   }
 }
 
-async function deleteFromR2 (carId: string): Promise<boolean> {
-  const key = `${carId}/${carId}.car`
+async function deleteFromR2 (cid: string): Promise<boolean> {
+  const key = `${cid}/${cid}.car`
 
   try {
     // First check if object exists
@@ -110,11 +112,11 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
   } catch (error: any) {
     if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
       // Log to notfound.csv
-      fs.appendFileSync(notFoundPath, `${carId}\n`)
-      console.log(`${carId} not found in ${CAR_BUCKET} (logged to notfound.csv)`)
+      fs.appendFileSync(notFoundPath, `${cid}\n`)
+      console.log(`${cid} not found in ${CAR_BUCKET} (logged to notfound.csv)`)
       return false
     } else {
-      console.error(`error looking for ${carId} in ${CAR_BUCKET}: `, error)
+      console.error(`error looking for ${cid} in ${CAR_BUCKET}: `, error)
     }
   }
 
@@ -133,13 +135,13 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
         Key: key
       }))
     } catch (error: any) {
-      console.error(`error copying and deleting ${carId} from ${CAR_BUCKET}:`, error)
+      console.error(`error copying and deleting ${cid} from ${CAR_BUCKET}:`, error)
       return false
     }
   } else {
     console.log("--delete not specified, skipping deletion")
   }
-  fs.appendFileSync(deletedPath, `${carId}\n`)
+  fs.appendFileSync(deletedPath, `${cid}\n`)
 
   return true
 
@@ -160,6 +162,7 @@ rl.on('line', async (carId: string) => {
 
   if (migrated) {
     console.log(`${cid} has been migrated to the ${migrated} table`)
+    fs.appendFileSync(migratedPath, `${cid}\n`)
   } else {
     console.log(`${cid} has not been migrated`)
     try {
