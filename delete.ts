@@ -2,15 +2,11 @@ import * as Link from 'multiformats/link'
 import { base32 } from 'multiformats/bases/base32'
 import { base58btc } from 'multiformats/bases/base58'
 import * as Digest from 'multiformats/hashes/digest'
-import csv from 'csv-parser'
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb'
 import { S3Client, CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
 import fs from 'fs'
+import readline from 'readline'
 import 'dotenv/config'
-
-interface CsvRow {
-  car_id: string
-}
 
 const CAR_BUCKET = 'carpark-prod-0'
 const GRAVEYARD_BUCKET = 'carpark-prod-0-graveyard'
@@ -142,35 +138,41 @@ async function deleteFromR2 (carId: string): Promise<boolean> {
 
 }
 
-process.stdin
-  .pipe(csv())
-  .on('data', async (row: CsvRow) => {
-    // Process each row
-    const carLink = parseCarId(row.car_id)
-    const cid = carLink.toString()
-    const migrated = await hasBeenMigrated(carLink)
+const rl = readline.createInterface({
+  input: process.stdin,
+  crlfDelay: Infinity
+})
 
-    if (migrated) {
-      console.log(`${cid} has been migrated to the ${migrated} table`)
-    } else {
-      console.log(`${cid} has not been migrated`)
+rl.on('line', async (carId: string) => {
+  carId = carId.trim()
+  if (!carId) return // Skip empty lines
+  
+  const carLink = parseCarId(carId)
+  const cid = carLink.toString()
+  const migrated = await hasBeenMigrated(carLink)
 
-      if (deleteMode) {
-        try {
-          const deleted = await deleteFromR2(cid)
-          if (deleted) {
-            console.log(`  ✓ Deleted ${row.car_id} as ${cid} from ${CAR_BUCKET} and backed up to ${GRAVEYARD_BUCKET}`)
-          } else {
-            console.log(`  ✗ ${row.car_id} as ${cid} not deleted from ${CAR_BUCKET} (logged to notfound.csv)`)
-          }
-        } catch (error) {
-          console.error(`  ✗ Error deleting ${row.car_id} as ${cid}:`, error)
+  if (migrated) {
+    console.log(`${cid} has been migrated to the ${migrated} table`)
+  } else {
+    console.log(`${cid} has not been migrated`)
+
+    if (deleteMode) {
+      try {
+        const deleted = await deleteFromR2(cid)
+        if (deleted) {
+          console.log(`  ✓ Deleted ${carId} as ${cid} from ${CAR_BUCKET} and backed up to ${GRAVEYARD_BUCKET}`)
+        } else {
+          console.log(`  ✗ ${carId} as ${cid} not deleted from ${CAR_BUCKET} (logged to notfound.csv)`)
         }
-      } else {
-        console.log("--delete not specified, skipping deletion")
+      } catch (error) {
+        console.error(`  ✗ Error deleting ${carId} as ${cid}:`, error)
       }
+    } else {
+      console.log("--delete not specified, skipping deletion")
     }
-  })
-  .on('end', () => {
-    console.log('CSV processing complete')
-  });
+  }
+})
+
+rl.on('close', () => {
+  console.log('Processing complete')
+})
