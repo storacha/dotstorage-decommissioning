@@ -31,6 +31,9 @@ const s3 = new S3Client({
   credentials: {
     accessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID!,
     secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY!
+  },
+  requestHandler: {
+    httpsAgent: { maxSockets: MAX_SOCKETS },
   }
 })
 
@@ -209,10 +212,10 @@ const rl = readline.createInterface({
 })
 
 const start = new Date()
-console.log(`starting at ${start}`)
+console.log(`starting at ${start} with batches of ${BATCH_SIZE} and ${MAX_SOCKETS} sockets`)
 for await (const batch of batches(rl, BATCH_SIZE)) {
   console.log('Processing next batch')
-  await Promise.all([...chunks(batch, 10)].map(processLines))
+  await Promise.all([...chunks(batch, Math.floor(BATCH_SIZE / MAX_SOCKETS))].map(processLines))
 }
 const end = new Date()
 console.log(`ending at ${end}`)
