@@ -10,12 +10,18 @@ import 'dotenv/config'
 
 const CAR_BUCKET = 'carpark-prod-0'
 const GRAVEYARD_BUCKET = 'carpark-prod-0-graveyard'
+const MAX_SOCKETS = parseInt(process.env.STORACHA_DOTSTORAGE_DELETE_MAX_SOCKETS ?? '100')
+const BATCH_SIZE = parseInt(process.env.STORACHA_DOTSTORAGE_DELETE_BATCH_SIZE ?? '5000')
+
 
 const dynamodb = new DynamoDBClient({
   region: 'us-west-2',
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!
+  },
+  requestHandler: {
+    httpsAgent: { maxSockets: MAX_SOCKETS },
   }
 })
 
@@ -147,37 +153,68 @@ async function deleteFromR2 (cid: string): Promise<boolean> {
 
 }
 
+// thanks, https://stackoverflow.com/posts/66762031/revisions
+async function* batches<T> (iterable: AsyncIterable<T>, batchSize: number) {
+  let items: T[] = [];
+  for await (const item of iterable) {
+    items.push(item);
+    if (items.length >= batchSize) {
+      yield items;
+      items = []
+    }
+  }
+  if (items.length !== 0) {
+    yield items;
+  }
+}
+
+// thanks, https://stackoverflow.com/posts/55435856/revisions
+function* chunks<T> (arr: T[], n: number): Generator<T[], void> {
+  for (let i = 0; i < arr.length; i += n) {
+    yield arr.slice(i, i + n);
+  }
+}
+
+async function processLines (lines: Iterable<string>) {
+  for (const line of lines) {
+    const carId = line.trim()
+    if (!carId) continue // Skip empty lines
+
+    const carLink = parseCarId(carId)
+    const cid = carLink.toString()
+    const migrated = await hasBeenMigrated(carLink)
+
+    if (migrated) {
+      console.log(`${cid} has been migrated to the ${migrated} table`)
+      fs.appendFileSync(migratedPath, `${cid}\n`)
+    } else {
+      console.log(`${cid} has not been migrated`)
+      try {
+        const deleted = await deleteFromR2(cid)
+        if (deleted) {
+          console.log(`  ✓ Deleted ${carId} as ${cid} from ${CAR_BUCKET} and backed up to ${GRAVEYARD_BUCKET}`)
+        } else {
+          console.log(`  ✗ ${carId} as ${cid} not deleted from ${CAR_BUCKET} (logged to notfound.csv)`)
+        }
+      } catch (error) {
+        console.error(`  ✗ Error deleting ${carId} as ${cid}:`, error)
+      }
+    }
+  }
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   crlfDelay: Infinity
 })
 
-rl.on('line', async (carId: string) => {
-  carId = carId.trim()
-  if (!carId) return // Skip empty lines
+const start = new Date()
+console.log(`starting at ${start}`)
+for await (const batch of batches(rl, BATCH_SIZE)) {
+  console.log('Processing next batch')
+  await Promise.all([...chunks(batch, 10)].map(processLines))
+}
+const end = new Date()
+console.log(`ending at ${end}`)
 
-  const carLink = parseCarId(carId)
-  const cid = carLink.toString()
-  const migrated = await hasBeenMigrated(carLink)
-
-  if (migrated) {
-    console.log(`${cid} has been migrated to the ${migrated} table`)
-    fs.appendFileSync(migratedPath, `${cid}\n`)
-  } else {
-    console.log(`${cid} has not been migrated`)
-    try {
-      const deleted = await deleteFromR2(cid)
-      if (deleted) {
-        console.log(`  ✓ Deleted ${carId} as ${cid} from ${CAR_BUCKET} and backed up to ${GRAVEYARD_BUCKET}`)
-      } else {
-        console.log(`  ✗ ${carId} as ${cid} not deleted from ${CAR_BUCKET} (logged to notfound.csv)`)
-      }
-    } catch (error) {
-      console.error(`  ✗ Error deleting ${carId} as ${cid}:`, error)
-    }
-  }
-})
-
-rl.on('close', () => {
-  console.log('Processing complete')
-})
+console.log(`processing took ${end.getTime() - start.getTime()}ms`)
