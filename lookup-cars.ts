@@ -36,12 +36,13 @@ async function lookupByBlockMultihash (blockmultihash: string): Promise<string[]
       ExpressionAttributeValues: {
         ':blockmultihash': { S: blockmultihash }
       },
-      ProjectionExpression: 'carpath'
+      ExpressionAttributeNames: {"#L":"length", "#O": "offset"},
+      ProjectionExpression: 'carpath,#L,#O'
     }))
     
     if (query.Items && query.Items.length > 0) {
       return query.Items
-        .map(item => item.carpath?.S)
+        .map(item => `${item.carpath?.S}`)
         .filter((carpath): carpath is string => carpath !== undefined)
     }
   } catch (error) {
@@ -84,7 +85,7 @@ async function processLines (lines: Iterable<string>) {
       
       if (carpaths.length > 0) {
         for (const carpath of carpaths) {
-          const csvLine = `${blockmultihash},${carpath}`
+          const csvLine = `${contentCid},${carpath}`
           fs.appendFileSync(carsPath, `${csvLine}\n`)
         }
         console.log(`✓ Found: ${contentCid} -> ${blockmultihash} -> ${carpaths.length} carpath(s)`)
